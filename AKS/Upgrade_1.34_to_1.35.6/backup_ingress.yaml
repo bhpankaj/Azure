@@ -1,0 +1,29 @@
+# AKS Backup — Ingress
+# Source: kubectl get ingress --all-namespaces -o yaml > backup_ingress.yaml
+# Generated: 2026-10-28
+# Cluster: <RG> / <Cluster>
+# Note: Captures Ingress rules (hosts, TLS, backend services, annotations). Re-apply with:
+#   kubectl apply -f backup_ingress.yaml
+---
+# Example structure:
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: <ingress-name>
+#   namespace: <namespace>
+#   annotations:
+#     kubernetes.io/ingress.class: nginx
+# spec:
+#   rules:
+#   - host: <host>
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: <service>
+#             port:
+#               number: 80
+# To generate actual content:
+# kubectl get ingress --all-namespaces -o yaml > /run/media/black/dbfa0647-b941-4878-ab09-c84ba0c6879c/Azure/AKS/Upgrade_1.34_to_1.35.6/backup_ingress.yaml

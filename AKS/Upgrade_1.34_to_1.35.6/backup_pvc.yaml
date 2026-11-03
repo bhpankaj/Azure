@@ -1,0 +1,21 @@
+# AKS Backup — PersistentVolumeClaims
+# Source: kubectl get pvc --all-namespaces -o yaml > backup_pvc.yaml
+# Generated: 2026-10-28
+# Cluster: <RG> / <Cluster>
+# Note: Captures PVC definitions (requests, storage class, volume name bindings, namespace). Restore requires corresponding PV data to be intact or restored separately.
+---
+# Example structure:
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: <pvc-name>
+#   namespace: <namespace>
+# spec:
+#   accessModes:
+#     - ReadWriteOnce
+#   resources:
+#     requests:
+#       storage: 100Gi
+#   storageClassName: <class>
+# To generate actual content:
+# kubectl get pvc --all-namespaces -o yaml > /run/media/black/dbfa0647-b941-4878-ab09-c84ba0c6879c/Azure/AKS/Upgrade_1.34_to_1.35.6/backup_pvc.yaml

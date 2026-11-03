@@ -1,0 +1,20 @@
+# AKS Backup — PersistentVolumes
+# Source: kubectl get pv -o yaml > backup_pv.yaml
+# Generated: 2026-10-28
+# Cluster: <RG> / <Cluster>
+# Note: This captures PV metadata (names, storage class, access modes, reclaim policy, bind references). Actual data resides on Azure-managed disks and requires separate snapshot/backup.
+---
+# Example structure:
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: <pv-name>
+# spec:
+#   capacity:
+#     storage: 100Gi
+#   accessModes:
+#     - ReadWriteOnce
+#   persistentVolumeReclaimPolicy: Retain
+#   storageClassName: <class>
+# To generate actual content:
+# kubectl get pv -o yaml > /run/media/black/dbfa0647-b941-4878-ab09-c84ba0c6879c/Azure/AKS/Upgrade_1.34_to_1.35.6/backup_pv.yaml

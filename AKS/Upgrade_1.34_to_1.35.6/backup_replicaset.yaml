@@ -1,0 +1,21 @@
+# AKS Backup — ReplicaSets
+# Source: kubectl get replicaset --all-namespaces -o yaml > backup_replicaset.yaml
+# Generated: 2026-10-28
+# Cluster: <RG> / <Cluster>
+# Note: ReplicaSets are typically managed by Deployments. This backup is for reference / rollback scenarios where direct ReplicaSet restoration is needed.
+---
+# Example structure:
+# apiVersion: apps/v1
+# kind: ReplicaSet
+# metadata:
+#   name: <replicaset-name>
+#   namespace: <namespace>
+#   labels:
+#     app: <label>
+# spec:
+#   replicas: 3
+#   selector:
+#     matchLabels:
+#       app: <label>
+# To generate actual content:
+# kubectl get replicaset --all-namespaces -o yaml > /run/media/black/dbfa0647-b941-4878-ab09-c84ba0c6879c/Azure/AKS/Upgrade_1.34_to_1.35.6/backup_replicaset.yaml

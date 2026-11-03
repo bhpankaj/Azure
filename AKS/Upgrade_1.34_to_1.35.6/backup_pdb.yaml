@@ -1,0 +1,20 @@
+# AKS Backup — PodDisruptionBudgets
+# Source: kubectl get pdb --all-namespaces -o yaml > backup_pdb.yaml
+# Generated: 2026-10-28
+# Cluster: <RG> / <Cluster>
+# Note: Contains PDB definitions (minAvailable, maxUnavailable, selectors). Re-apply with:
+#   kubectl apply -f backup_pdb.yaml
+---
+# Example structure (populated by backup command):
+# apiVersion: policy/v1
+# kind: PodDisruptionBudget
+# metadata:
+#   name: <pdb-name>
+#   namespace: <namespace>
+# spec:
+#   minAvailable: 1
+#   selector:
+#     matchLabels:
+#       app: <label>
+# To generate actual content:
+# kubectl get pdb --all-namespaces -o yaml > /run/media/black/dbfa0647-b941-4878-ab09-c84ba0c6879c/Azure/AKS/Upgrade_1.34_to_1.35.6/backup_pdb.yaml

@@ -1,0 +1,19 @@
+# AKS Backup — Deployments
+# Source: kubectl get deployments --all-namespaces -o yaml > backup_deployments.yaml
+# Generated: 2026-10-28
+# Cluster: <RG> / <Cluster>
+# Note: This file contains deployment definitions (metadata only). Re-apply with:
+#   kubectl apply -f backup_deployments.yaml
+# Actual resource data is produced by running the command above against the live cluster.
+---
+# Example structure (populated by backup command):
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: <deployment-name>
+#   namespace: <namespace>
+# spec:
+#   replicas: 3
+# ...
+# To generate actual content, execute:
+# kubectl get deployments --all-namespaces -o yaml > /run/media/black/dbfa0647-b941-4878-ab09-c84ba0c6879c/Azure/AKS/Upgrade_1.34_to_1.35.6/backup_deployments.yaml
