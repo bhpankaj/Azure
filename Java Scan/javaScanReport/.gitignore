@@ -1,0 +1,5 @@
+# Scanned server data is generated output and may contain hostnames, package
+# lists and process arguments. Keep the folder, do not commit its contents.
+*
+!.gitkeep
+!.gitignore

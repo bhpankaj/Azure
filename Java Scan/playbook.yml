@@ -1,0 +1,108 @@
+---
+# Java scan over SSH: copy a shell script to every target, execute it, then pull
+# the report it produced back into javaScanReport/ on the machine running this
+# playbook (the Ansible control node).
+#
+# Password handling: `vars_prompt` runs ONCE per playbook execution, so the
+# single password typed at the start is reused for every host in the inventory.
+# The same value is also handed to sudo, so no second prompt appears.
+#
+# Usage:
+#   ansible-playbook playbook.yml
+#   ansible-playbook playbook.yml -e scan_become=true        # scan needs root
+#   ansible-playbook playbook.yml -e scan_script_src=/path/to/your.sh
+#   ansible-playbook playbook.yml -e scan_user=azureadmin
+- name: Java scan - copy, run, collect
+  hosts: java_scan
+  gather_facts: false
+  become: "{{ scan_become | default(false) | bool }}"
+
+  vars:
+    # One password for every host: vars_prompt defines ansible_password and the
+    # aliases below feed it to the SSH connection and to the sudo become plugin.
+    ansible_user: "{{ scan_user | default('azureuser') }}"
+    ansible_ssh_pass: "{{ ansible_password }}"
+    ansible_become_password: "{{ ansible_password }}"
+
+    # Script that is copied to the targets. Absolute paths are accepted so a
+    # script kept outside this directory can be used with -e scan_script_src=...
+    scan_script_src: "{{ playbook_dir }}/files/java_scan.sh"
+
+    # Remote working directory, namespaced per host so two inventory entries
+    # that resolve to the same machine cannot overwrite each other's files or
+    # race on cleanup.
+    scan_remote_name: "{{ inventory_hostname | regex_replace('[^A-Za-z0-9._-]', '_') }}"
+    scan_remote_dir: "/tmp/java-scan-{{ scan_remote_name }}"
+    scan_remote_script: "{{ scan_remote_dir }}/java_scan.sh"
+    scan_remote_report: "{{ scan_remote_dir }}/report.json"
+
+    # Where the collected data lands on THIS machine, one subfolder per host.
+    scan_local_dir: "{{ playbook_dir }}/javaScanReport"
+
+  vars_prompt:
+    - name: ansible_password
+      prompt: "SSH password (used for every server)"
+      private: true
+
+  tasks:
+    - name: Ensure the local report directory for this host exists
+      ansible.builtin.file:
+        path: "{{ scan_local_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      become: false
+
+    - name: Ensure the remote scan directory exists
+      ansible.builtin.file:
+        path: "{{ scan_remote_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy the scan script to the target
+      ansible.builtin.copy:
+        src: "{{ scan_script_src }}"
+        dest: "{{ scan_remote_script }}"
+        mode: "0755"
+
+    - name: Execute the scan script
+      ansible.builtin.command:
+        argv:
+          - bash
+          - "{{ scan_remote_script }}"
+          - "{{ scan_remote_report }}"
+      args:
+        chdir: "{{ scan_remote_dir }}"
+      register: java_scan_run
+      changed_when: true
+
+    - name: Save the script console output on the control node
+      ansible.builtin.copy:
+        content: |
+          === STDOUT ===
+          {{ java_scan_run.stdout }}
+
+          === STDERR ===
+          {{ java_scan_run.stderr }}
+        dest: "{{ scan_local_dir }}/{{ inventory_hostname }}/stdout.log"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+
+    - name: Check whether the scan produced a report file
+      ansible.builtin.stat:
+        path: "{{ scan_remote_report }}"
+      register: java_scan_report_stat
+
+    - name: Fetch the report back to the control node
+      ansible.builtin.fetch:
+        src: "{{ scan_remote_report }}"
+        dest: "{{ scan_local_dir }}/{{ inventory_hostname }}/"
+        flat: true
+      when: java_scan_report_stat.stat.exists
+
+    - name: Remove the remote scan directory
+      ansible.builtin.file:
+        path: "{{ scan_remote_dir }}"
+        state: absent
+      when: scan_cleanup | default(true) | bool
