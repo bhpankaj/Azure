@@ -5,7 +5,17 @@ param(
     [string]$Username = "ansiblesrv",
     [string]$ExcelLookupFile = ".\Data\LinuxServers\LinuxServersListLatest.xlsx",
     [Parameter(HelpMessage="SSH password for -Username. If omitted you are prompted.")]
-    [string]$Password
+    [string]$Password,
+
+    [Parameter(HelpMessage="SSH port. Default 22.")]
+    [ValidateRange(1, 65535)]
+    [int]$Port = 22,
+
+    [Parameter(HelpMessage="Try SSH port 22 first, then -Port, if 22 does not answer.")]
+    [switch]$TryDefaultPortFirst,
+
+    [Parameter(HelpMessage="Show this help and exit.")]
+    [switch]$Help
 )
 
 $ErrorActionPreference = "Stop"
@@ -73,6 +83,89 @@ function Get-IpLookup {
     }
     return $Lookup
 }
+
+# Connects over SSH, trying port 22 first when -TryDefaultPortFirst is set and
+# -Port is not 22, then -Port. Returns the live session and the port that worked.
+function Connect-SshTarget {
+    param(
+        [string]$ComputerName,
+        [pscredential]$Credential,
+        [int]$Port = 22,
+        [switch]$TryDefaultPortFirst,
+        [int]$Timeout = 5
+    )
+
+    $Candidates = @()
+    if ($TryDefaultPortFirst -and $Port -ne 22) { $Candidates += 22 }
+    $Candidates += $Port
+    $Candidates = @($Candidates | Select-Object -Unique)
+
+    $LastError = $null
+    foreach ($Candidate in $Candidates) {
+        try {
+            $Session = New-SSHSession -ComputerName $ComputerName -Port $Candidate -Credential $Credential -AcceptKey -ConnectionTimeout $Timeout -ErrorAction Stop
+            if ($Candidate -ne $Port) {
+                Write-Host "`n      connected on fallback port $Candidate" -ForegroundColor DarkGray
+            }
+            return [pscustomobject]@{ Session = $Session; Port = $Candidate }
+        }
+        catch {
+            $LastError = $_
+            Write-Host "`n      ssh port $Candidate failed: $($_.Exception.Message)" -ForegroundColor DarkGray
+        }
+    }
+
+    if ($null -ne $LastError) { throw $LastError.Exception }
+    throw "Could not connect to $ComputerName on port(s): $($Candidates -join ', ')"
+}
+
+# Prints this script's own parameters, derived from its param block so the list
+# can never drift from the real parameters.
+function Show-ScriptHelp {
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$tokens, [ref]$parseErrors)
+    $paramBlock = $ast.ParamBlock
+    if ($null -eq $paramBlock) { return }
+
+    $rows = foreach ($p in $paramBlock.Parameters) {
+        $type = if ($p.StaticType) { $p.StaticType.Name } else { 'object' }
+        if ($type -eq 'SwitchParameter') { $type = 'switch' }
+        $default = ''
+        if ($null -ne $p.DefaultValue) {
+            $default = if ($p.DefaultValue -is [System.Management.Automation.Language.ConstantExpressionAst]) {
+                "$($p.DefaultValue.Value)"
+            } else {
+                $p.DefaultValue.ToString()
+            }
+        }
+        $help = ''
+        foreach ($attr in $p.Attributes) {
+            if ($attr.TypeName.GetReflectionType() -eq [System.Management.Automation.ParameterAttribute]) {
+                foreach ($named in $attr.NamedArguments) {
+                    if ($named.ArgumentName -eq 'HelpMessage') { $help = "$($named.Argument.Value)" }
+                }
+            }
+        }
+        [pscustomobject]@{
+            # Type first: PowerShell 7.7 masks the value that follows a
+            # "-Password" token in formatted output.
+            Type        = $type
+            Parameter   = "-$($p.Name.VariablePath.UserPath)"
+            Default     = $default
+            Description = $help
+        }
+    }
+
+    Write-Host ''
+    Write-Host "$(Split-Path -Leaf $PSCommandPath) - parameters" -ForegroundColor Cyan
+    Write-Host ''
+    $rows | Format-Table -AutoSize | Out-String -Width 200
+    Write-Host 'Run without -Password to be prompted for it once.' -ForegroundColor DarkGray
+    Write-Host ''
+}
+
+if ($Help) { Show-ScriptHelp; exit 0 }
 
 # --- prerequisites ------------------------------------------------------
 if (-not (Get-Module -ListAvailable -Name Posh-SSH)) {
@@ -259,7 +352,8 @@ foreach ($Server in $Servers) {
 
     $Session = $null
     try {
-        $Session = New-SSHSession -ComputerName $Ip -Credential $Cred -AcceptKey -ConnectionTimeout 15 -ErrorAction Stop
+        $Connected = Connect-SshTarget -ComputerName $Ip -Credential $Cred -Port $Port -TryDefaultPortFirst:$TryDefaultPortFirst -Timeout 15
+        $Session = $Connected.Session
         Write-Host "SSH connected successfully." -ForegroundColor Green
 
         Write-Host "Uploading java.sh to remote /tmp..." -ForegroundColor Green

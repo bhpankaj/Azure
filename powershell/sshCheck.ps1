@@ -24,7 +24,17 @@ param(
     [switch]$UseHostname,
 
     [Parameter(HelpMessage = "SSH password for -Username. If omitted you are prompted.")]
-    [string]$Password
+    [string]$Password,
+
+    [Parameter(HelpMessage = "SSH port. Default 22.")]
+    [ValidateRange(1, 65535)]
+    [int]$Port = 22,
+
+    [Parameter(HelpMessage = "Try SSH port 22 first, then -Port, if 22 does not answer.")]
+    [switch]$TryDefaultPortFirst,
+
+    [Parameter(HelpMessage = "Show this help and exit.")]
+    [switch]$Help
 )
 
 Set-StrictMode -Version Latest
@@ -113,6 +123,89 @@ function Get-RemoteScriptPath {
     if ([string]::IsNullOrWhiteSpace($Name)) { $Name = 'sshcheck-script.sh' }
     return "/tmp/$Name"
 }
+
+# Connects over SSH, trying port 22 first when -TryDefaultPortFirst is set and
+# -Port is not 22, then -Port. Returns the live session and the port that worked.
+function Connect-SshTarget {
+    param(
+        [string]$ComputerName,
+        [pscredential]$Credential,
+        [int]$Port = 22,
+        [switch]$TryDefaultPortFirst,
+        [int]$Timeout = 5
+    )
+
+    $Candidates = @()
+    if ($TryDefaultPortFirst -and $Port -ne 22) { $Candidates += 22 }
+    $Candidates += $Port
+    $Candidates = @($Candidates | Select-Object -Unique)
+
+    $LastError = $null
+    foreach ($Candidate in $Candidates) {
+        try {
+            $Session = New-SSHSession -ComputerName $ComputerName -Port $Candidate -Credential $Credential -AcceptKey -ConnectionTimeout $Timeout -ErrorAction Stop
+            if ($Candidate -ne $Port) {
+                Write-Host "`n      connected on fallback port $Candidate" -ForegroundColor DarkGray
+            }
+            return [pscustomobject]@{ Session = $Session; Port = $Candidate }
+        }
+        catch {
+            $LastError = $_
+            Write-Host "`n      ssh port $Candidate failed: $($_.Exception.Message)" -ForegroundColor DarkGray
+        }
+    }
+
+    if ($null -ne $LastError) { throw $LastError.Exception }
+    throw "Could not connect to $ComputerName on port(s): $($Candidates -join ', ')"
+}
+
+# Prints this script's own parameters, derived from its param block so the list
+# can never drift from the real parameters.
+function Show-ScriptHelp {
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$tokens, [ref]$parseErrors)
+    $paramBlock = $ast.ParamBlock
+    if ($null -eq $paramBlock) { return }
+
+    $rows = foreach ($p in $paramBlock.Parameters) {
+        $type = if ($p.StaticType) { $p.StaticType.Name } else { 'object' }
+        if ($type -eq 'SwitchParameter') { $type = 'switch' }
+        $default = ''
+        if ($null -ne $p.DefaultValue) {
+            $default = if ($p.DefaultValue -is [System.Management.Automation.Language.ConstantExpressionAst]) {
+                "$($p.DefaultValue.Value)"
+            } else {
+                $p.DefaultValue.ToString()
+            }
+        }
+        $help = ''
+        foreach ($attr in $p.Attributes) {
+            if ($attr.TypeName.GetReflectionType() -eq [System.Management.Automation.ParameterAttribute]) {
+                foreach ($named in $attr.NamedArguments) {
+                    if ($named.ArgumentName -eq 'HelpMessage') { $help = "$($named.Argument.Value)" }
+                }
+            }
+        }
+        [pscustomobject]@{
+            # Type first: PowerShell 7.7 masks the value that follows a
+            # "-Password" token in formatted output.
+            Type        = $type
+            Parameter   = "-$($p.Name.VariablePath.UserPath)"
+            Default     = $default
+            Description = $help
+        }
+    }
+
+    Write-Host ''
+    Write-Host "$(Split-Path -Leaf $PSCommandPath) - parameters" -ForegroundColor Cyan
+    Write-Host ''
+    $rows | Format-Table -AutoSize | Out-String -Width 200
+    Write-Host 'Run without -Password to be prompted for it once.' -ForegroundColor DarkGray
+    Write-Host ''
+}
+
+if ($Help) { Show-ScriptHelp; exit 0 }
 
 # ---------------------------------------------------------------- prerequisites
 
@@ -406,10 +499,14 @@ $DownloadFailed = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 $script:Failed  = $false
 $Timestamp      = Get-Date -Format "yyyyMMdd_HHmmss"
-$SuccessfulFile = "${Username}_Successful_${Timestamp}.txt"
-$TimeoutFile    = "${Username}_Timeout_${Timestamp}.txt"
-$AuthFailFile   = "${Username}_AuthFailed_${Timestamp}.txt"
-$OtherFailFile  = "${Username}_OtherFailed_${Timestamp}.txt"
+
+# Every result/log file goes under .\scriptLog, never the working directory.
+$LogDir         = ".\scriptLog"
+New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+$SuccessfulFile = Join-Path $LogDir "${Username}_Successful_${Timestamp}.txt"
+$TimeoutFile    = Join-Path $LogDir "${Username}_Timeout_${Timestamp}.txt"
+$AuthFailFile   = Join-Path $LogDir "${Username}_AuthFailed_${Timestamp}.txt"
+$OtherFailFile  = Join-Path $LogDir "${Username}_OtherFailed_${Timestamp}.txt"
 
 Write-Host ''
 Write-Host "Starting SSH connectivity tests for $($Servers.Count) host(s)..." -ForegroundColor Cyan
@@ -430,16 +527,11 @@ foreach ($Server in $Servers) {
     }
 
     try {
-        $Session = New-SSHSession -ComputerName $Server.IP -Credential $Cred -AcceptKey -ConnectionTimeout 5 -ErrorAction Stop
-        if ($null -ne $Session) {
-            Write-Host " [SUCCESS]" -ForegroundColor Green
-            $Successful.Add($Server)
-        }
-        else {
-            Write-Host " [FAILED]" -ForegroundColor Red
-            $OtherFailed.Add($Server)
-            continue
-        }
+        $Connected = Connect-SshTarget -ComputerName $Server.IP -Credential $Cred -Port $Port -TryDefaultPortFirst:$TryDefaultPortFirst
+        $Session = $Connected.Session
+        $ServerPort = $Connected.Port
+        Write-Host " [SUCCESS]" -ForegroundColor Green
+        $Successful.Add($Server)
     }
     catch {
         $Ex     = $_.Exception
@@ -467,7 +559,7 @@ foreach ($Server in $Servers) {
         $RemoteScript = Get-RemoteScriptPath -LocalPath $ScriptFile
         try {
             $RemoteDir = Split-Path -Parent ($RemoteScript -replace '\\', '/')
-            $SftpUp = New-SFTPSession -ComputerName $Server.IP -Credential $Cred -AcceptKey -ConnectionTimeout 5 -ErrorAction Stop
+            $SftpUp = New-SFTPSession -ComputerName $Server.IP -Port $ServerPort -Credential $Cred -AcceptKey -ConnectionTimeout 5 -ErrorAction Stop
             try {
                 Set-SFTPItem -SFTPSession $SftpUp -Path $ScriptFile -Destination $RemoteDir -Force -ErrorAction Stop
             }
@@ -499,7 +591,7 @@ foreach ($Server in $Servers) {
                 throw "Remote file not found: $RemoteFile"
             }
 
-            $Sftp = New-SFTPSession -ComputerName $Server.IP -Credential $Cred -AcceptKey -ConnectionTimeout 5 -ErrorAction Stop
+            $Sftp = New-SFTPSession -ComputerName $Server.IP -Port $ServerPort -Credential $Cred -AcceptKey -ConnectionTimeout 5 -ErrorAction Stop
             try {
                 Get-SFTPItem -SFTPSession $Sftp -Path $RemoteFile -Destination $DownloadDir -Force -ErrorAction Stop
             }
